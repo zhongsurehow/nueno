@@ -565,8 +565,8 @@ th {
 }
 
 /* 设置列宽度 */
-th:nth-child(1) {
-    width: 15%;
+th:nth-child(1) { /* 货币 */
+    width: 12%;
 }
 
 th:nth-child(2),
@@ -576,12 +576,24 @@ th:nth-child(5),
 th:nth-child(6),
 th:nth-child(7),
 th:nth-child(8),
-th:nth-child(9) {
-    width: 9%;
+th:nth-child(9) { /* 交易所 (8) */
+    width: 7%;
 }
 
-th:nth-child(10) {
-    width: 15%;
+th:nth-child(10) { /* 最大差价 */
+    width: 8%;
+}
+
+th:nth-child(11), th:nth-child(12) { /* 提现/充值链路 */
+    width: 8%;
+}
+
+th:nth-child(13) { /* 充提合一 */
+    width: 4%;
+}
+
+th:nth-child(14) { /* 套利机会 */
+    width: 4%;
 }
 
 td {
