@@ -92,23 +92,49 @@ main {
 }
 
 /* 套利机会样式 */
-.arbitrage-opportunity {
-    background-color: #f8f9fa;
-    border: 1px solid #e9ecef;
-    border-radius: 8px;
-    padding: 1rem;
-    margin-bottom: 1rem;
-    border-left: 4px solid #28a745;
+#arbitrage-opportunities {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+    gap: 1rem;
 }
 
-.arbitrage-opportunity.high-profit {
-    border-left-color: #dc3545;
-    background-color: #fff5f5;
+.arbitrage-opportunity-card {
+    background-color: #ffffff;
+    border-radius: 8px;
+    padding: 1.5rem;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+    border-top: 4px solid #3498db;
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.arbitrage-opportunity-card:hover {
+    transform: translateY(-5px);
+    box-shadow: 0 8px 20px rgba(0,0,0,0.12);
+}
+
+.arbitrage-opportunity-card.high-profit {
+    border-top-color: #e74c3c;
+}
+
+.arbitrage-opportunity-card h4 {
+    font-size: 1.2rem;
+    margin-bottom: 1rem;
+    color: #2c3e50;
 }
 
 .arbitrage-profit {
-    font-weight: bold;
-    font-size: 1.1rem;
+    font-size: 2rem;
+    font-weight: 700;
+    margin-bottom: 0.5rem;
+}
+
+.arbitrage-details {
+    font-size: 0.9rem;
+    color: #555;
+}
+
+.arbitrage-details strong {
+    color: #333;
 }
 
 .profit-high { color: #dc3545; }
@@ -279,6 +305,30 @@ main {
     color: #6c757d;
 }
 
+.cell-info {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 0.8rem;
+    color: #888;
+    margin-top: 4px;
+}
+
+.wallet-status {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    display: inline-block;
+}
+
+.wallet-status.ok {
+    background-color: #2ecc71; /* green */
+}
+
+.wallet-status.maintenance {
+    background-color: #e74c3c; /* red */
+}
+
 .bid-ask-prices .ask-price::before {
     content: '卖: ';
     font-size: 0.8rem;
@@ -289,6 +339,16 @@ main {
 .arbitrage-cell {
     text-align: center;
     font-weight: bold;
+}
+
+.arbitrage-cell .profit {
+    font-size: 1.2em;
+    font-weight: 700;
+}
+
+.arbitrage-cell .path {
+    font-size: 0.8em;
+    color: #555;
 }
 
 .arbitrage-cell.opportunity {
@@ -495,6 +555,18 @@ tbody tr:hover {
 .price-low {
     color: #e74c3c;
 }
+
+/* Heatmap colors for prices */
+.price-heatmap-0 { background-color: #d4edda; } /* Lightest green */
+.price-heatmap-1 { background-color: #bce3c4; }
+.price-heatmap-2 { background-color: #a4d9ae; }
+.price-heatmap-3 { background-color: #8ccfa8; }
+.price-heatmap-4 { background-color: #74c5a2; }
+.price-heatmap-5 { background-color: #f8d7da; } /* Lightest red */
+.price-heatmap-6 { background-color: #f4c3c7; }
+.price-heatmap-7 { background-color: #f0afb4; }
+.price-heatmap-8 { background-color: #ec9ba1; }
+.price-heatmap-9 { background-color: #e8878e; } /* Darkest red */
 
 .price-spread {
     font-weight: bold;
