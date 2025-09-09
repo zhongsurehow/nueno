@@ -43,8 +43,9 @@ document.addEventListener('DOMContentLoaded', () => {
     // 获取充提信息
     fetchDepositWithdrawInfo();
     
-    // 默认设置30秒自动刷新
-    setAutoRefresh(30);
+// 默认设置为手动刷新
+document.getElementById('auto-refresh').value = "0";
+setAutoRefresh(0);
 });
 
 // 请求通知权限
@@ -164,6 +165,21 @@ function setAutoRefresh(seconds) {
 // CoinAPI key - 替换为你自己的API密钥
 const apiKey = "YOUR_API_KEY_HERE";
 
+// 要获取的货币列表
+const symbolsToFetch = [
+    'BTC', 'ETH', 'XRP', 'USDT', 'BNB', 'SOL', 'USDC', 'DOGE', 'TRX', 'ADA',
+    'LINK', 'BCH', 'AVAX', 'LTC', 'DOT', 'UNI', 'XLM', 'ETC', 'ATOM', 'ICP',
+    // 'HYPE', 'USDe', 'SUI', 'HBAR', 'LEO', 'CRO', 'TON', 'SHIB', 'ENA',
+    // 'WLFI', 'DAI', 'XMR', 'AAVE', 'PEPE', 'MNT', 'OKB', 'WLD', 'TAO',
+    // 'BGB', 'NEAR', 'MYX', 'APT', 'ONDO', 'POL', 'ARB', 'PI', 'USD1',
+    // 'IP', 'PENGU', 'KAS', 'VET', 'ALGO', 'M', 'RENDER', 'BONK', 'SEI',
+    // 'KCS', 'SKY', 'TRUMP', 'FIL', 'PUMP', 'FLR', 'JUP', 'FET', 'FDUSD',
+    // 'XDC', 'INJ', 'OP', 'GT', 'TIA', 'SPX', 'FORM', 'QNT', 'STX', 'PYUSD',
+    // 'CRV', 'LDO', 'AERO', 'IMX', 'PAXG', 'GRT', 'KAIA', 'FLOKI', 'PYTH',
+    // 'RAY', 'S', 'CFX', 'XAUt', 'WIF', 'ENS', 'VIRTUAL', 'CAKE', 'FARTCOIN',
+    // 'THETA', 'PENDLE', 'NEXO', 'ZEC', 'GALA', 'XTZ', 'IOTA'
+];
+
 // 从CoinAPI获取数据
 async function fetchData() {
     if (isLoading) return;
@@ -185,38 +201,44 @@ async function fetchData() {
     }
 
     try {
-        const symbolsToFetch = ['BTC', 'ETH', 'SOL', 'DOGE', 'LINK'];
         const promises = symbolsToFetch.map(symbol => {
-            const filter = `&filter_symbol_id=SPOT_${symbol}_USDT`;
+            const filter = `filter_symbol_id=${symbol}_USDT`;
             return fetch(`https://rest.coinapi.io/v1/quotes/current?${filter}`, {
                 headers: {
                     'X-CoinAPI-Key': apiKey
                 }
             }).then(response => {
                 if (!response.ok) {
-                    throw new Error(`HTTP error! status: ${response.status}`);
+                    // 429: Too Many Requests. Don't throw an error, just log it.
+                    if (response.status === 429) {
+                        console.warn(`Rate limit exceeded for symbol ${symbol}.`);
+                        return []; // Return empty array to not break Promise.all
+                    }
+                    throw new Error(`HTTP error! status: ${response.status} for symbol ${symbol}`);
                 }
                 return response.json();
             });
         });
 
         const results = await Promise.all(promises);
-        
-        // 将API返回的数据转换为我们需要的格式
-        const newCryptoData = [];
+
         const cryptoMap = new Map();
 
         results.flat().forEach(quote => {
+            // symbol_id is like 'KRAKEN_SPOT_BTC_USDT'
             const parts = quote.symbol_id.split('_');
+            if (parts.length < 4) return; // Skip malformed IDs
+
             const exchange = parts[0].toLowerCase();
             const symbol = parts[2];
+
+            // Only include exchanges we have in our list
+            if (!exchanges.includes(exchange)) return;
 
             if (!cryptoMap.has(symbol)) {
                 cryptoMap.set(symbol, {
                     name: `${symbol}/USDT`,
                     symbol: symbol,
-                    market_cap: 0, // API不直接提供，需要另外获取或模拟
-                    volume_24h: 0, // API不直接提供
                 });
             }
 
@@ -224,10 +246,13 @@ async function fetchData() {
             cryptoItem[exchange] = {
                 bid: quote.bid_price,
                 ask: quote.ask_price,
+                bid_size: quote.bid_size,
+                ask_size: quote.ask_size,
+                time_exchange: quote.time_exchange,
                 mid: (quote.bid_price + quote.ask_price) / 2,
-                volume: quote.bid_size + quote.ask_size, // 这是一个近似值
-                walletStatus: 'ok', // 需要另外的API来获取真实状态
-                tradingFee: 0.001 // 模拟手续费
+                volume: quote.bid_size + quote.ask_size, // Still an approximation
+                walletStatus: 'ok',
+                tradingFee: 0.001
             };
         });
         
@@ -240,7 +265,6 @@ async function fetchData() {
     } catch (error) {
         console.error('获取CoinAPI数据失败:', error);
         showError('获取实时价格数据失败，请检查您的API密钥或网络连接。');
-        // 发生错误时可以加载模拟数据作为备用
         cryptoData = getMockDataWithRealStructure();
         calculateArbitrageOpportunities();
         updateTable();
@@ -334,21 +358,16 @@ function createBidAskCell(priceData, maxPrice, minPrice) {
         className = `price-heatmap-${Math.min(heatIndex, 9)}`; // Cap at 9
     }
     
-    // Function to format large numbers
-    const formatVolume = (vol) => {
-        if (vol > 1_000_000) return `${(vol / 1_000_000).toFixed(2)}M`;
-        if (vol > 1_000) return `${(vol / 1_000).toFixed(1)}K`;
-        return vol.toFixed(0);
-    };
+    const formatSize = (size) => size.toFixed(3);
+    const quoteTime = new Date(priceData.time_exchange).toLocaleTimeString('zh-CN');
 
-    return `<td class="${className}">
+    return `<td class="${className}" title="报价时间: ${quoteTime}">
         <div class="bid-ask-prices">
-            <div class="bid-price">买: ${priceData.bid.toFixed(6)}</div>
-            <div class="ask-price">卖: ${priceData.ask.toFixed(6)}</div>
+            <div class="bid-price">买: ${priceData.bid.toFixed(6)} <small>(${formatSize(priceData.bid_size)})</small></div>
+            <div class="ask-price">卖: ${priceData.ask.toFixed(6)} <small>(${formatSize(priceData.ask_size)})</small></div>
         </div>
         <div class="cell-info">
-            <span>Vol: ${formatVolume(priceData.volume)}</span>
-            <span class="wallet-status ${priceData.walletStatus}" title="Wallet Status: ${priceData.walletStatus}"></span>
+            <span class="wallet-status ${priceData.walletStatus}" title="钱包状态: ${priceData.walletStatus}"></span>
         </div>
     </td>`;
 }
@@ -379,21 +398,22 @@ function calculateCryptoArbitrage(crypto) {
     let bestBuy = null;
     let bestSell = null;
     let maxNetProfit = 0;
+    let bestAskSize = 0;
+    let bestBidSize = 0;
 
     exchanges.forEach(buyExchange => {
         const buyData = crypto[buyExchange];
-        if (!buyData || buyData.walletStatus !== 'ok') return;
+        if (!buyData || buyData.walletStatus !== 'ok' || !buyData.ask_size) return;
 
         exchanges.forEach(sellExchange => {
             if (buyExchange === sellExchange) return;
 
             const sellData = crypto[sellExchange];
-            if (!sellData || sellData.walletStatus !== 'ok') return;
+            if (!sellData || sellData.walletStatus !== 'ok' || !sellData.bid_size) return;
 
             const buyPrice = buyData.ask;
             const sellPrice = sellData.bid;
 
-            // 考虑交易费用
             const actualBuyPrice = buyPrice * (1 + buyData.tradingFee);
             const actualSellPrice = sellPrice * (1 - sellData.tradingFee);
             const netProfit = actualSellPrice - actualBuyPrice;
@@ -402,6 +422,8 @@ function calculateCryptoArbitrage(crypto) {
                 maxNetProfit = netProfit;
                 bestBuy = buyExchange;
                 bestSell = sellExchange;
+                bestAskSize = buyData.ask_size;
+                bestBidSize = sellData.bid_size;
             }
         });
     });
@@ -419,7 +441,9 @@ function calculateCryptoArbitrage(crypto) {
             sellExchange: exchangeNames[bestSell],
             buyPrice: buyPrice,
             sellPrice: sellPrice,
-            netProfit: maxNetProfit
+            netProfit: maxNetProfit,
+            askSize: bestAskSize,
+            bidSize: bestBidSize
         };
     }
 
@@ -676,31 +700,28 @@ function updateArbitragePanel() {
         return;
     }
     
-    // 只显示前5个最佳机会
     const topOpportunities = arbitrageOpportunities.slice(0, 5);
 
     const html = topOpportunities.map(opp => {
-        const profitClass = opp.profitPercentage > 2 ? 'profit-high' : 
-                           opp.profitPercentage > 1 ? 'profit-medium' : 'profit-low';
-        
-        // 假设买卖费用都是0.1%
-        const buyFee = opp.buyPrice * 0.001;
-        const sellFee = opp.sellPrice * 0.001;
-        const netProfit = opp.profit - buyFee - sellFee;
-        const netProfitPercentage = (netProfit / opp.buyPrice) * 100;
+        const profitClass = opp.profitPercentage > 2 ? 'profit-high' : 'profit-low';
+        const netProfitPercentage = (opp.netProfit / opp.buyPrice) * 100;
+
+        // The amount of crypto you can trade is the smaller of the two sides of the book.
+        const tradeableAmountCrypto = Math.min(opp.askSize, opp.bidSize);
+        const tradeableAmountUSD = tradeableAmountCrypto * opp.buyPrice;
 
         return `
             <div class="arbitrage-opportunity-card ${opp.profitPercentage > 2 ? 'high-profit' : ''}">
                 <h4>${opp.name} (${opp.symbol})</h4>
                 <div class="arbitrage-profit ${profitClass}">
-                    +${opp.profitPercentage.toFixed(2)}%
+                    +${netProfitPercentage.toFixed(2)}% <span style="font-size: 1rem; color: #555;">(净)</span>
                 </div>
                 <div class="arbitrage-details">
                     <div><strong>路径:</strong> ${opp.buyExchange} → ${opp.sellExchange}</div>
-                    <div><strong>买入价:</strong> $${opp.buyPrice.toFixed(4)}</div>
-                    <div><strong>卖出价:</strong> $${opp.sellPrice.toFixed(4)}</div>
+                    <div><strong>买入价:</strong> $${opp.buyPrice.toFixed(4)} | <strong>卖出价:</strong> $${opp.sellPrice.toFixed(4)}</div>
                     <hr style="margin: 0.5rem 0;">
-                    <div><strong>预估净利润率:</strong> <span class="${netProfitPercentage > 0 ? 'profit-low' : 'profit-high'}">${netProfitPercentage.toFixed(2)}%</span> (已考虑0.1%手续费)</div>
+                    <div><strong>预估可交易量:</strong> ${tradeableAmountCrypto.toFixed(4)} ${opp.symbol} (~$${tradeableAmountUSD.toFixed(0)})</div>
+                    <div><small>(基于可用的买/卖盘深度)</small></div>
                 </div>
             </div>
         `;
@@ -771,40 +792,42 @@ function updateDepositWithdrawPanel() {
 
 // 生成具有真实结构的模拟数据（占位符）
 function getMockDataWithRealStructure() {
-    const symbols = ['BTC', 'ETH', 'SOL', 'DOGE', 'LINK'];
-    const mockData = symbols.map(symbol => {
-        let basePrice;
-        // Assign more realistic base prices
+    // We only use the active symbols from the list
+    const activeSymbols = symbolsToFetch.filter(s => !s.startsWith('//'));
+
+    const mockData = activeSymbols.map(symbol => {
+        let basePrice = Math.random() * 1000; // Default base price
+        // Assign more realistic base prices for known symbols
         switch (symbol) {
-            case 'BTC': basePrice = 67000 + (Math.random() - 0.5) * 2000; break;
-            case 'ETH': basePrice = 3500 + (Math.random() - 0.5) * 200; break;
-            case 'SOL': basePrice = 150 + (Math.random() - 0.5) * 20; break;
-            case 'DOGE': basePrice = 0.15 + (Math.random() - 0.5) * 0.05; break;
-            case 'LINK': basePrice = 18 + (Math.random() - 0.5) * 2; break;
-            default: basePrice = Math.random() * 1000;
+            case 'BTC': basePrice = 67000; break;
+            case 'ETH': basePrice = 3500; break;
+            case 'SOL': basePrice = 150; break;
+            case 'DOGE': basePrice = 0.15; break;
+            case 'LINK': basePrice = 18; break;
+            case 'XRP': basePrice = 0.5; break;
+            case 'BNB': basePrice = 600; break;
         }
+        basePrice += (Math.random() - 0.5) * basePrice * 0.1; // Add some variance
 
         const cryptoItem = {
             name: `${symbol}/USDT`,
             symbol: symbol,
-            market_cap: Math.random() * 1e12,
-            volume_24h: Math.random() * 1e10,
         };
 
         exchanges.forEach(exchange => {
-            // More realistic, smaller variations
-            const priceVariation = (Math.random() - 0.5) * basePrice * 0.01; // Max 0.5% variation from base
+            const priceVariation = (Math.random() - 0.5) * basePrice * 0.01;
             const midPrice = basePrice + priceVariation;
-            // Spread based on price
-            const spread = midPrice * 0.0005 * (Math.random() + 0.5); // 0.025% to 0.075% spread
+            const spread = midPrice * 0.0005 * (Math.random() + 0.5);
 
             cryptoItem[exchange] = {
                 bid: midPrice - spread / 2,
                 ask: midPrice + spread / 2,
+                bid_size: Math.random() * 10, // e.g., 0-10 BTC
+                ask_size: Math.random() * 10,
+                time_exchange: new Date().toISOString(),
                 mid: midPrice,
-                volume: Math.random() * 1e8, // 24h volume on this exchange
-                walletStatus: ['ok', 'ok', 'ok', 'maintenance'][Math.floor(Math.random() * 4)], // 'ok' or 'maintenance'
-                tradingFee: 0.001 + Math.random() * 0.001 // 0.1% to 0.2%
+                walletStatus: ['ok', 'ok', 'ok', 'maintenance'][Math.floor(Math.random() * 4)],
+                tradingFee: 0.001
             };
         });
         return cryptoItem;
