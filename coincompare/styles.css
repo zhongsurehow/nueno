@@ -91,29 +91,139 @@ main {
     font-size: 1.2rem;
 }
 
-/* 套利机会样式 */
-.arbitrage-opportunity {
+/* 套利机会面板新样式 */
+#arbitrage-opportunities {
+    padding: 0;
+}
+
+.text-center {
+    text-align: center;
+    padding: 1rem;
+    color: #6c757d;
+}
+
+.panel-controls {
+    padding: 0.5rem 1.5rem;
     background-color: #f8f9fa;
+    border-bottom: 1px solid #e9ecef;
+}
+
+.panel-controls p {
+    margin: 0;
+    font-size: 0.9rem;
+    color: #495057;
+}
+
+.opportunities-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(350px, 1fr));
+    gap: 1rem;
+    padding: 1.5rem;
+}
+
+.opportunity-card {
+    background-color: #fff;
     border: 1px solid #e9ecef;
     border-radius: 8px;
-    padding: 1rem;
-    margin-bottom: 1rem;
-    border-left: 4px solid #28a745;
+    transition: all 0.3s ease;
+    border-left-width: 5px;
 }
 
-.arbitrage-opportunity.high-profit {
-    border-left-color: #dc3545;
-    background-color: #fff5f5;
+.opportunity-card:hover {
+    transform: translateY(-3px);
+    box-shadow: 0 6px 12px rgba(0,0,0,0.08);
 }
 
-.arbitrage-profit {
+.opportunity-card[data-profit-level="high"] { border-left-color: #e74c3c; }
+.opportunity-card[data-profit-level="medium"] { border-left-color: #f39c12; }
+.opportunity-card[data-profit-level="low"] { border-left-color: #2ecc71; }
+
+.opportunity-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0.75rem 1rem;
+    border-bottom: 1px solid #f1f3f5;
+}
+
+.opportunity-coin {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 1rem;
+}
+
+.opportunity-profit-badge {
+    padding: 0.25rem 0.6rem;
+    border-radius: 12px;
     font-weight: bold;
-    font-size: 1.1rem;
+    color: #fff;
+    font-size: 0.9rem;
 }
 
-.profit-high { color: #dc3545; }
-.profit-medium { color: #fd7e14; }
-.profit-low { color: #28a745; }
+.profit-high { background-color: #e74c3c; }
+.profit-medium { background-color: #f39c12; }
+.profit-low { background-color: #2ecc71; }
+
+.opportunity-body {
+    padding: 1rem;
+}
+
+.opportunity-path {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 1rem;
+}
+
+.exchange-box {
+    text-align: center;
+    padding: 0.5rem;
+    background-color: #f8f9fa;
+    border: 1px solid #e9ecef;
+    border-radius: 6px;
+    width: 45%;
+}
+
+.exchange-name {
+    font-weight: bold;
+    display: block;
+    margin-bottom: 0.25rem;
+    color: #34495e;
+}
+
+.action-label {
+    font-size: 0.8rem;
+    color: #7f8c8d;
+}
+
+.price-label {
+    font-size: 0.9rem;
+    font-weight: bold;
+    color: #333;
+    display: block;
+}
+
+.arrow {
+    font-size: 1.5rem;
+    color: #bdc3c7;
+}
+
+.opportunity-details {
+    font-size: 0.9rem;
+    color: #34495e;
+}
+
+.opportunity-details div {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.25rem 0;
+}
+
+.opportunity-details i {
+    color: #95a5a6;
+}
 
 /* 公告样式 */
 .announcement-item {
@@ -395,20 +505,33 @@ main {
 
 .tooltip .tooltiptext {
     visibility: hidden;
-    width: 200px;
-    background-color: #555;
+    width: 240px;
+    background-color: #2c3e50;
     color: #fff;
-    text-align: center;
+    text-align: left;
     border-radius: 6px;
-    padding: 5px;
+    padding: 8px 12px;
     position: absolute;
-    z-index: 1;
-    bottom: 125%;
+    z-index: 10;
+    bottom: 110%;
     left: 50%;
-    margin-left: -100px;
+    margin-left: -120px; /* Use half of the width to center */
     opacity: 0;
-    transition: opacity 0.3s;
-    font-size: 0.8rem;
+    transition: opacity 0.3s ease;
+    font-size: 0.85rem;
+    line-height: 1.5;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+}
+
+.tooltip .tooltiptext::after {
+    content: "";
+    position: absolute;
+    top: 100%;
+    left: 50%;
+    margin-left: -5px;
+    border-width: 5px;
+    border-style: solid;
+    border-color: #2c3e50 transparent transparent transparent;
 }
 
 .tooltip:hover .tooltiptext {

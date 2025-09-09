@@ -372,19 +372,22 @@ function createArbitrageCell(arbitrageInfo) {
     if (!arbitrageInfo || arbitrageInfo.profit <= 0) {
         return '<td class="arbitrage-cell">-</td>';
     }
-    
+
     const profitPercentage = arbitrageInfo.profitPercentage.toFixed(2);
     let className = 'arbitrage-cell';
-    
+
     if (arbitrageInfo.profitPercentage > 2) {
         className += ' high-opportunity';
     } else if (arbitrageInfo.profitPercentage > 0.5) {
         className += ' opportunity';
     }
-    
-    return `<td class="${className}">
+
+    const tooltipText = `买入: ${arbitrageInfo.buyExchange} @ ${arbitrageInfo.buyPrice.toFixed(6)}<br>卖出: ${arbitrageInfo.sellExchange} @ ${arbitrageInfo.sellPrice.toFixed(6)}<br>利润: $${arbitrageInfo.profit.toFixed(6)}`;
+
+    return `<td class="${className} tooltip">
         <div>${profitPercentage}%</div>
         <small>${arbitrageInfo.buyExchange} → ${arbitrageInfo.sellExchange}</small>
+        <span class="tooltiptext">${tooltipText}</span>
     </td>`;
 }
 
@@ -438,6 +441,7 @@ function calculateArbitrageOpportunities() {
             arbitrageOpportunities.push({
                 symbol: crypto.symbol,
                 name: crypto.name,
+                volume_24h: crypto.volume_24h,
                 ...arbitrageInfo
             });
         }
@@ -489,27 +493,32 @@ function sortData(column) {
 function sortDataByConfig(data) {
     return [...data].sort((a, b) => {
         let valueA, valueB;
-        
+
         if (sortConfig.column === 'name') {
             valueA = a.name;
             valueB = b.name;
         } else if (sortConfig.column === 'spread') {
-            // 计算价差
-            const pricesA = [
-                a.binance, a.okx, a.mexc, a.gate, a.kucoin, a.bitget, a.bybit, a.htx
-            ].filter(price => price !== null && isFinite(price));
-            const pricesB = [
-                b.binance, b.okx, b.mexc, b.gate, b.kucoin, b.bitget, b.bybit, b.htx
-            ].filter(price => price !== null && isFinite(price));
+            const getMidPrice = (crypto, exchange) => crypto[exchange] ? crypto[exchange].mid : null;
             
-            valueA = pricesA.length > 0 ? Math.max(...pricesA) - Math.min(...pricesA) : 0;
-            valueB = pricesB.length > 0 ? Math.max(...pricesB) - Math.min(...pricesB) : 0;
+            const pricesA = exchanges
+                .map(ex => getMidPrice(a, ex))
+                .filter(price => price !== null && isFinite(price));
+
+            const pricesB = exchanges
+                .map(ex => getMidPrice(b, ex))
+                .filter(price => price !== null && isFinite(price));
+
+            valueA = pricesA.length > 1 ? Math.max(...pricesA) - Math.min(...pricesA) : 0;
+            valueB = pricesB.length > 1 ? Math.max(...pricesB) - Math.min(...pricesB) : 0;
         } else {
             // 对于交易所价格列
-            valueA = a[sortConfig.column] === null || !isFinite(a[sortConfig.column]) ? -Infinity : a[sortConfig.column];
-            valueB = b[sortConfig.column] === null || !isFinite(b[sortConfig.column]) ? -Infinity : b[sortConfig.column];
+            const priceA = a[sortConfig.column] ? a[sortConfig.column].mid : null;
+            const priceB = b[sortConfig.column] ? b[sortConfig.column].mid : null;
+
+            valueA = priceA === null || !isFinite(priceA) ? -Infinity : priceA;
+            valueB = priceB === null || !isFinite(priceB) ? -Infinity : priceB;
         }
-        
+
         // 比较
         if (valueA < valueB) {
             return sortConfig.direction === 'asc' ? -1 : 1;
@@ -672,36 +681,65 @@ async function fetchDepositWithdrawInfo() {
 // 更新套利面板
 function updateArbitragePanel() {
     const container = document.getElementById('arbitrage-opportunities');
-    
+
     if (arbitrageOpportunities.length === 0) {
-        container.innerHTML = '<p>暂无套利机会</p>';
+        container.innerHTML = '<p class="text-center">暂无高于0.1%的套利机会</p>';
         return;
     }
-    
-    const html = arbitrageOpportunities.slice(0, 10).map(opp => {
-        const profitClass = opp.profitPercentage > 2 ? 'profit-high' : 
-                           opp.profitPercentage > 1 ? 'profit-medium' : 'profit-low';
+
+    const opportunitiesHtml = arbitrageOpportunities.slice(0, 15).map(opp => {
+        const profitLevel = opp.profitPercentage > 2 ? 'high' : opp.profitPercentage > 1 ? 'medium' : 'low';
         
         return `
-            <div class="arbitrage-opportunity ${opp.profitPercentage > 2 ? 'high-profit' : ''}">
-                <div class="d-flex justify-content-between align-items-center">
-                    <div>
+            <div class="opportunity-card" data-profit-level="${profitLevel}">
+                <div class="opportunity-header">
+                    <div class="opportunity-coin">
+                        <i class="fas fa-coins"></i>
                         <strong>${opp.name} (${opp.symbol})</strong>
-                        <div class="arbitrage-route">
-                            在 ${opp.buyExchange} 买入 ($${opp.buyPrice.toFixed(6)}) → 
-                            在 ${opp.sellExchange} 卖出 ($${opp.sellPrice.toFixed(6)})
+                    </div>
+                    <div class="opportunity-profit-badge profit-${profitLevel}">
+                        +${opp.profitPercentage.toFixed(2)}%
+                    </div>
+                </div>
+                <div class="opportunity-body">
+                    <div class="opportunity-path">
+                        <div class="exchange-box">
+                            <span class="exchange-name">${opp.buyExchange}</span>
+                            <span class="action-label">Buy At</span>
+                            <span class="price-label">$${opp.buyPrice.toFixed(6)}</span>
+                        </div>
+                        <div class="arrow"><i class="fas fa-long-arrow-alt-right"></i></div>
+                        <div class="exchange-box">
+                            <span class="exchange-name">${opp.sellExchange}</span>
+                            <span class="action-label">Sell At</span>
+                            <span class="price-label">$${opp.sellPrice.toFixed(6)}</span>
                         </div>
                     </div>
-                    <div class="arbitrage-profit ${profitClass}">
-                        +${opp.profitPercentage.toFixed(2)}%
-                        <div style="font-size: 0.9rem;">$${opp.profit.toFixed(6)}</div>
+                    <div class="opportunity-details">
+                        <div>
+                            <i class="fas fa-calculator"></i>
+                            <strong>利润:</strong>
+                            <span>$${opp.profit.toFixed(6)} / per unit</span>
+                        </div>
+                        <div>
+                            <i class="fas fa-chart-bar"></i>
+                            <strong>24h Volume:</strong>
+                            <span>$${opp.volume_24h ? opp.volume_24h.toLocaleString('en-US', { maximumFractionDigits: 0 }) : 'N/A'}</span>
+                        </div>
                     </div>
                 </div>
             </div>
         `;
     }).join('');
-    
-    container.innerHTML = html;
+
+    container.innerHTML = `
+        <div class="panel-controls">
+            <p>Top 15 opportunities (sorted by profit %)</p>
+        </div>
+        <div class="opportunities-grid">
+            ${opportunitiesHtml}
+        </div>
+    `;
 }
 
 // 更新公告面板
