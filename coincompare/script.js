@@ -1,4 +1,6 @@
 // 全局变量
+const USE_REAL_APIS = false; // Set to true to use real APIs, false for local testing
+let chainDataCache = {};
 let cryptoData = [];
 let sortConfig = {
     column: 'name',
@@ -219,6 +221,7 @@ async function fetchData() {
     hideError();
 
     try {
+        chainDataCache = {}; // Clear cache on each refresh
         // 使用 getMockData() 生成的数据
         const mockData = getMockData();
 
@@ -765,6 +768,7 @@ async function updateDepositWithdrawPanel() {
 const exchangeConfigs = {
     'OKX': {
         api: 'https://www.okx.com/api/v5/asset/currencies',
+        param: 'ccy',
         parser: 'okx'
     },
     'Gate': {
@@ -777,110 +781,123 @@ const exchangeConfigs = {
     },
     'Bitget': {
         api: 'https://api.bitget.com/api/v2/spot/public/coins',
+        param: 'coin',
         parser: 'bitget'
     },
-    'Binance': {
-        mock: true
-    },
-    'MEXC': {
-        mock: true
-    },
-    'Bybit': {
-        mock: true
-    },
-    'HTX': {
-        mock: true
-    }
+    'Binance': { mock: true },
+    'MEXC': { mock: true },
+    'Bybit': { mock: true },
+    'HTX': { mock: true }
 };
 
 async function fetchChainData(coin) {
+    if (chainDataCache[coin]) {
+        return chainDataCache[coin];
+    }
+
     const exchangeData = {};
 
+    // For local testing, use mock data to avoid CORS issues and improve speed
+    if (!USE_REAL_APIS) {
+        for (const exchange in exchangeConfigs) {
+            exchangeData[exchange] = getMockChainData(coin, exchange);
+        }
+        chainDataCache[coin] = exchangeData;
+        return exchangeData;
+    }
+
+    // Real API fetching logic
     for (const exchange in exchangeConfigs) {
         const config = exchangeConfigs[exchange];
         if (config.api) {
             try {
-                const response = await fetch(`${config.api}?coin=${coin.toLowerCase()}`);
+                let url = config.api;
+                if (config.param) {
+                    url += `?${config.param}=${coin.toUpperCase()}`;
+                }
+                const response = await fetch(url);
                 const data = await response.json();
                 exchangeData[exchange] = parseChainData(data, config.parser, coin);
             } catch (error) {
-                console.error(`Error fetching data for ${exchange}:`, error);
-                exchangeData[exchange] = {
-                    deposit: ['Error'],
-                    withdrawal: ['Error']
-                };
+                console.error(`Error fetching real data for ${exchange}:`, error);
+                exchangeData[exchange] = { deposit: ['API Error'], withdrawal: ['API Error'] };
             }
         } else if (config.mock) {
-            exchangeData[exchange] = getMockChainData(coin);
+            exchangeData[exchange] = getMockChainData(coin, exchange);
         }
     }
 
+    chainDataCache[coin] = exchangeData;
     return exchangeData;
 }
 
 function parseChainData(data, parser, coin) {
-    const chains = {
-        deposit: [],
-        withdrawal: []
-    };
+    const chains = { deposit: [], withdrawal: [] };
+    const coinLower = coin.toLowerCase();
 
-    if (parser === 'okx' && data.data) {
-        data.data.forEach(currency => {
-            if(currency.ccy.toLowerCase() === coin.toLowerCase()){
-                if (currency.canDep) chains.deposit.push(currency.chain);
-                if (currency.canWd) chains.withdrawal.push(currency.chain);
+    try {
+        if (parser === 'okx' && data.data) {
+            const currencyInfo = data.data.find(c => c.ccy.toLowerCase() === coinLower);
+            if (currencyInfo) {
+                if (currencyInfo.canDep) chains.deposit.push(currencyInfo.chain);
+                if (currencyInfo.canWd) chains.withdrawal.push(currencyInfo.chain);
             }
-        });
-    } else if (parser === 'gate' && data) {
-        data.forEach(currency => {
-            if (currency.currency.toLowerCase() === coin.toLowerCase() && currency.chains) {
-                currency.chains.forEach(chain => {
-                    if (chain.deposit_disabled === 0) chains.deposit.push(chain.chain);
-                    if (chain.withdraw_disabled === 0) chains.withdrawal.push(chain.chain);
+        } else if (parser === 'gate' && Array.isArray(data)) {
+            const currencyInfo = data.find(c => c.currency.toLowerCase() === coinLower);
+            if (currencyInfo && currencyInfo.chains) {
+                currencyInfo.chains.forEach(chain => {
+                    if (!chain.deposit_disabled) chains.deposit.push(chain.chain);
+                    if (!chain.withdraw_disabled) chains.withdrawal.push(chain.chain);
                 });
             }
-        });
-    } else if (parser === 'kucoin' && data.data) {
-        if (data.data.chains) {
-            data.data.chains.forEach(chain => {
-                if (chain.isDepositEnabled) chains.deposit.push(chain.chainName);
-                if (chain.isWithdrawEnabled) chains.withdrawal.push(chain.chainName);
-            });
-        }
-    } else if (parser === 'bitget' && data.data) {
-        data.data.forEach(currency => {
-            if(currency.coin.toLowerCase() === coin.toLowerCase() && currency.chains){
-                currency.chains.forEach(chain => {
+        } else if (parser === 'kucoin' && data.data) {
+            const currencyInfo = data.data.find(c => c.currency.toLowerCase() === coinLower);
+            if (currencyInfo && currencyInfo.chains) {
+                currencyInfo.chains.forEach(chain => {
+                    if (chain.isDepositEnabled) chains.deposit.push(chain.chainName);
+                    if (chain.isWithdrawEnabled) chains.withdrawal.push(chain.chainName);
+                });
+            }
+        } else if (parser === 'bitget' && data.data) {
+            const currencyInfo = data.data.find(c => c.coin.toLowerCase() === coinLower);
+            if (currencyInfo && currencyInfo.chains) {
+                currencyInfo.chains.forEach(chain => {
                     if (chain.rechargeable) chains.deposit.push(chain.chain);
                     if (chain.withdrawable) chains.withdrawal.push(chain.chain);
                 });
             }
-        });
+        }
+    } catch (e) {
+        console.error(`Error parsing data for ${parser} and coin ${coin}:`, e);
+        return { deposit: ['Parse Error'], withdrawal: ['Parse Error'] };
     }
 
     return chains;
 }
 
-function getMockChainData(coin) {
-    // In a real application, this would be a more sophisticated mock
+function getMockChainData(coin, exchange) {
+    // Base mock data
     const mockChains = {
-        'BTC': {
-            deposit: ['Bitcoin', 'Lightning'],
-            withdrawal: ['Bitcoin']
-        },
-        'ETH': {
-            deposit: ['Ethereum', 'Arbitrum'],
-            withdrawal: ['Ethereum', 'Arbitrum', 'zkSync']
-        },
-        'USDT': {
-            deposit: ['Ethereum', 'Tron', 'Solana'],
-            withdrawal: ['Ethereum', 'Tron', 'Solana', 'Arbitrum']
-        }
+        'BTC': { deposit: ['Bitcoin', 'Lightning'], withdrawal: ['Bitcoin', 'Segwit'] },
+        'ETH': { deposit: ['Ethereum', 'Arbitrum'], withdrawal: ['Ethereum', 'Arbitrum', 'zkSync'] },
+        'USDT': { deposit: ['Ethereum (ERC20)', 'Tron (TRC20)', 'Solana'], withdrawal: ['Ethereum (ERC20)', 'Tron (TRC20)', 'Solana', 'Arbitrum'] }
     };
-    return mockChains[coin] || {
-        deposit: ['N/A'],
-        withdrawal: ['N/A']
-    };
+
+    const baseData = mockChains[coin] || { deposit: ['N/A'], withdrawal: ['N/A'] };
+
+    // Simulate slight variations for different exchanges to make it more realistic
+    if (exchange === 'binance') {
+        if (coin === 'ETH') return { deposit: ['Ethereum', 'Arbitrum', 'BSC'], withdrawal: ['Ethereum', 'Arbitrum', 'BSC'] };
+        if (coin === 'BTC') return { deposit: ['Bitcoin', 'Segwit', 'BSC'], withdrawal: ['Bitcoin', 'Segwit'] };
+    }
+    if (exchange === 'okx') {
+        if (coin === 'USDT') return { deposit: ['Ethereum (ERC20)', 'Tron (TRC20)', 'Solana', 'OKTC'], withdrawal: ['Ethereum (ERC20)', 'Tron (TRC20)', 'Solana', 'OKTC'] };
+    }
+    if (exchange === 'gate') {
+        if (coin === 'ETH') return { deposit: ['Ethereum', 'Arbitrum', 'GateChain'], withdrawal: ['Ethereum', 'Arbitrum'] };
+    }
+
+    return JSON.parse(JSON.stringify(baseData)); // Return a copy to prevent mutation
 }
 
 // 生成模拟数据
