@@ -23,6 +23,42 @@ const exchangeNames = {
     'htx': 'HTX'
 };
 
+// 模拟的交易所链信息
+// 链ID: 1:ERC20, 2:TRC20, 3:BSC, 4:SOL, 5:BTC, 6:BTC-Lightning
+const chainIdToName = { 1: 'ERC20', 2: 'TRC20', 3: 'BSC', 4: 'SOL', 5: 'BTC', 6: 'LN' };
+const exchangeChainInfo = {
+    'USDT': {
+        'binance': { deposit: [1, 2, 3, 4], withdraw: [1, 2, 3, 4] },
+        'okx':     { deposit: [1, 2, 3, 4], withdraw: [1, 2, 3, 4] },
+        'gate':    { deposit: [1, 2, 3],    withdraw: [1, 2, 4] }, // Incompatible
+        'bybit':   { deposit: [1, 2, 4],    withdraw: [1, 4] },
+        'kucoin':  { deposit: [1, 2],       withdraw: [1, 2] },
+        'mexc':    { deposit: [1, 2, 3],    withdraw: [1, 2, 3] },
+        'htx':     { deposit: [1, 2, 3],    withdraw: [1, 2, 3] },
+        'bitget':  { deposit: [1, 2, 4],    withdraw: [1, 2, 4] },
+    },
+    'ETH': {
+        'binance': { deposit: [1, 3], withdraw: [1, 3] },
+        'okx':     { deposit: [1, 3], withdraw: [1, 3] },
+        'gate':    { deposit: [1],    withdraw: [3] },      // Incompatible
+        'bybit':   { deposit: [1],    withdraw: [1] },
+        'kucoin':  { deposit: [1],    withdraw: [1] },
+        'mexc':    { deposit: [1, 3], withdraw: [1, 3] },
+        'htx':     { deposit: [1, 3], withdraw: [1, 3] },
+        'bitget':  { deposit: [1, 3], withdraw: [1, 3] },
+    },
+    'BTC': {
+        'binance': { deposit: [5, 6], withdraw: [5, 6] },
+        'okx':     { deposit: [5],    withdraw: [5, 6] },   // Partially incompatible
+        'gate':    { deposit: [5],    withdraw: [5] },
+        'bybit':   { deposit: [5],    withdraw: [5] },
+        'kucoin':  { deposit: [5],    withdraw: [5] },
+        'mexc':    { deposit: [5],    withdraw: [5] },
+        'htx':     { deposit: [5],    withdraw: [5] },
+        'bitget':  { deposit: [5],    withdraw: [5] },
+    }
+};
+
 // 中文名称映射表
 const chineseNameMap = {
     "btc": "比特币",
@@ -302,7 +338,7 @@ function updateTable() {
     // 如果没有数据
     if (filteredData.length === 0) {
         const row = document.createElement('tr');
-        row.innerHTML = `<td colspan="10" style="text-align: center;">没有找到匹配的数据</td>`;
+        row.innerHTML = `<td colspan="14" style="text-align: center;">没有找到匹配的数据</td>`;
         tableBody.appendChild(row);
         return;
     }
@@ -312,7 +348,7 @@ function updateTable() {
         const row = document.createElement('tr');
         
         // 计算最高和最低价格（使用中间价）
-        const prices = exchanges.map(exchange => crypto[exchange].mid).filter(price => price !== null && isFinite(price));
+        const prices = exchanges.map(exchange => crypto[exchange] ? crypto[exchange].mid : null).filter(price => price !== null && isFinite(price));
         
         const maxPrice = prices.length > 0 ? Math.max(...prices) : 0;
         const minPrice = prices.length > 0 ? Math.min(...prices) : 0;
@@ -321,6 +357,25 @@ function updateTable() {
         
         // 计算套利机会
         const arbitrageInfo = calculateCryptoArbitrage(crypto);
+
+        // 获取链信息
+        let withdrawChains = [];
+        let depositChains = [];
+        let compatibleChains = [];
+        if (arbitrageInfo) {
+            const coinSymbol = crypto.symbol.split('/')[0]; // e.g., 'BTC' from 'BTC/USDT'
+            const buyEx = arbitrageInfo.buyExchange.toLowerCase();
+            const sellEx = arbitrageInfo.sellExchange.toLowerCase();
+
+            const coinChainInfo = exchangeChainInfo[coinSymbol];
+            if (coinChainInfo) {
+                withdrawChains = coinChainInfo[buyEx] ? coinChainInfo[buyEx].withdraw : [];
+                depositChains = coinChainInfo[sellEx] ? coinChainInfo[sellEx].deposit : [];
+                if(withdrawChains && depositChains) {
+                    compatibleChains = withdrawChains.filter(c => depositChains.includes(c));
+                }
+            }
+        }
         
         // 创建单元格并添加高亮
         row.innerHTML = `
@@ -337,11 +392,34 @@ function updateTable() {
             ${createBidAskCell(crypto.bybit, maxPrice, minPrice)}
             ${createBidAskCell(crypto.htx, maxPrice, minPrice)}
             <td class="price-spread">${spread > 0 ? spread.toFixed(6) : '0.00'} (${spreadPercentage}%)</td>
+            ${createChainCell(withdrawChains)}
+            ${createChainCell(depositChains)}
+            ${createChainCompatibilityCell(compatibleChains)}
             ${createArbitrageCell(arbitrageInfo)}
         `;
         
         tableBody.appendChild(row);
     });
+}
+
+// 创建链信息单元格
+function createChainCell(chains) {
+    if (!chains || chains.length === 0) return '<td>-</td>';
+    const html = chains.map(chainId => {
+        const name = chainIdToName[chainId] || 'Unknown';
+        return `<span class="chain-badge chain-${name.toLowerCase()}">${name}</span>`;
+    }).join(' ');
+    return `<td>${html}</td>`;
+}
+
+// 创建链兼容性单元格
+function createChainCompatibilityCell(compatibleChains) {
+    if (!compatibleChains) return '<td>-</td>';
+    if (compatibleChains.length > 0) {
+        return `<td class="chain-compatible-yes"><i class="fas fa-check-circle"></i> 是</td>`;
+    } else {
+        return `<td class="chain-compatible-no"><i class="fas fa-times-circle"></i> 否</td>`;
+    }
 }
 
 // 创建买卖价格单元格HTML
@@ -382,11 +460,14 @@ function createArbitrageCell(arbitrageInfo) {
         className += ' opportunity';
     }
 
-    const tooltipText = `买入: ${arbitrageInfo.buyExchange} @ ${arbitrageInfo.buyPrice.toFixed(6)}<br>卖出: ${arbitrageInfo.sellExchange} @ ${arbitrageInfo.sellPrice.toFixed(6)}<br>利润: $${arbitrageInfo.profit.toFixed(6)}`;
+    const buyExName = exchangeNames[arbitrageInfo.buyExchange] || arbitrageInfo.buyExchange;
+    const sellExName = exchangeNames[arbitrageInfo.sellExchange] || arbitrageInfo.sellExchange;
+
+    const tooltipText = `买入: ${buyExName} @ ${arbitrageInfo.buyPrice.toFixed(6)}<br>卖出: ${sellExName} @ ${arbitrageInfo.sellPrice.toFixed(6)}<br>利润: $${arbitrageInfo.profit.toFixed(6)}`;
 
     return `<td class="${className} tooltip">
         <div>${profitPercentage}%</div>
-        <small>${arbitrageInfo.buyExchange} → ${arbitrageInfo.sellExchange}</small>
+        <small>${buyExName} → ${sellExName}</small>
         <span class="tooltiptext">${tooltipText}</span>
     </td>`;
 }
@@ -395,12 +476,12 @@ function createArbitrageCell(arbitrageInfo) {
 function calculateCryptoArbitrage(crypto) {
     let bestBuy = null;
     let bestSell = null;
-    let maxProfit = 0;
-    
+    let maxProfit = -Infinity;
+
     // 找到最低买入价和最高卖出价
     exchanges.forEach(buyExchange => {
         exchanges.forEach(sellExchange => {
-            if (buyExchange !== sellExchange) {
+            if (buyExchange !== sellExchange && crypto[buyExchange] && crypto[sellExchange]) {
                 const buyPrice = crypto[buyExchange].ask; // 在买入交易所的卖出价
                 const sellPrice = crypto[sellExchange].bid; // 在卖出交易所的买入价
                 const profit = sellPrice - buyPrice;
@@ -421,8 +502,8 @@ function calculateCryptoArbitrage(crypto) {
         return {
             profit: maxProfit,
             profitPercentage: profitPercentage,
-            buyExchange: exchangeNames[bestBuy],
-            sellExchange: exchangeNames[bestSell],
+            buyExchange: bestBuy,
+            sellExchange: bestSell,
             buyPrice: buyPrice,
             sellPrice: crypto[bestSell].bid
         };
@@ -499,7 +580,7 @@ function sortDataByConfig(data) {
             valueB = b.name;
         } else if (sortConfig.column === 'spread') {
             const getMidPrice = (crypto, exchange) => crypto[exchange] ? crypto[exchange].mid : null;
-            
+
             const pricesA = exchanges
                 .map(ex => getMidPrice(a, ex))
                 .filter(price => price !== null && isFinite(price));
@@ -704,13 +785,13 @@ function updateArbitragePanel() {
                 <div class="opportunity-body">
                     <div class="opportunity-path">
                         <div class="exchange-box">
-                            <span class="exchange-name">${opp.buyExchange}</span>
+                            <span class="exchange-name">${exchangeNames[opp.buyExchange] || opp.buyExchange}</span>
                             <span class="action-label">Buy At</span>
                             <span class="price-label">$${opp.buyPrice.toFixed(6)}</span>
                         </div>
                         <div class="arrow"><i class="fas fa-long-arrow-alt-right"></i></div>
                         <div class="exchange-box">
-                            <span class="exchange-name">${opp.sellExchange}</span>
+                            <span class="exchange-name">${exchangeNames[opp.sellExchange] || opp.sellExchange}</span>
                             <span class="action-label">Sell At</span>
                             <span class="price-label">$${opp.sellPrice.toFixed(6)}</span>
                         </div>
