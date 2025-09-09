@@ -374,13 +374,15 @@ function createArbitrageCell(arbitrageInfo) {
     const profitPercentage = arbitrageInfo.profitPercentage.toFixed(2);
     let className = 'arbitrage-cell';
     let viabilityIcon = '';
+    let commonChainsHtml = '';
 
     if (arbitrageInfo.isViable) {
         className += ' viable';
-        viabilityIcon = `<span class="viability-icon" title="搬砖路径通畅: ${arbitrageInfo.commonChains.join(', ')}">✅</span>`;
+        viabilityIcon = '✅';
+        commonChainsHtml = `<div class="common-chains" title="可用的充提网络">🔗 ${arbitrageInfo.commonChains.join(', ')}</div>`;
     } else {
         className += ' not-viable';
-        viabilityIcon = `<span class="viability-icon" title="搬砖路径不通">❌</span>`;
+        viabilityIcon = '❌';
     }
     
     if (arbitrageInfo.profitPercentage > 2) {
@@ -392,6 +394,7 @@ function createArbitrageCell(arbitrageInfo) {
     return `<td class="${className}">
         <div>${profitPercentage}% ${viabilityIcon}</div>
         <small>${arbitrageInfo.buyExchange} → ${arbitrageInfo.sellExchange}</small>
+        ${commonChainsHtml}
     </td>`;
 }
 
