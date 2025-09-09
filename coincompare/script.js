@@ -1,3 +1,4 @@
+console.log("--- SCRIPT START ---");
 // 全局变量
 const USE_REAL_APIS = false; // Set to true to use real APIs, false for local testing
 let chainDataCache = {};
@@ -212,7 +213,7 @@ function setAutoRefresh(seconds) {
     }
 }
 
-// 使用模拟数据
+// This function routes the data fetching based on the USE_REAL_APIS flag.
 async function fetchData() {
     if (isLoading) return;
     isLoading = true;
@@ -435,6 +436,63 @@ function updateTable() {
     });
 }
 
+// 创建买卖价格单元格HTML
+function createBidAskCell(priceData, maxPrice, minPrice) {
+    if (!priceData || !priceData.bid || !priceData.ask) {
+        return '<td>-</td>';
+    }
+
+    let className = '';
+    const midPrice = priceData.mid;
+
+    if (midPrice === maxPrice) {
+        className = 'price-highest';
+    } else if (midPrice === minPrice) {
+        className = 'price-lowest';
+    }
+
+    return `<td class="${className}">
+        <div class="bid-ask-prices">
+            <div class="bid-price">买: ${priceData.bid.toFixed(6)}</div>
+            <div class="ask-price">卖: ${priceData.ask.toFixed(6)}</div>
+        </div>
+    </td>`;
+}
+
+// 创建套利机会单元格
+function createArbitrageCell(arbitrageInfo) {
+    if (!arbitrageInfo || arbitrageInfo.profit <= 0) {
+        return '<td class="arbitrage-cell">-</td>';
+    }
+
+    const profitPercentage = arbitrageInfo.profitPercentage.toFixed(2);
+    let className = 'arbitrage-cell';
+    let viabilityIcon = '';
+    let commonChainsHtml = '';
+
+    if (arbitrageInfo.isViable) {
+        className += ' viable';
+        viabilityIcon = '✅';
+        commonChainsHtml = `<div class="common-chains" title="可用的充提网络">🔗 ${arbitrageInfo.commonChains.join(', ')}</div>`;
+    } else {
+        className += ' not-viable';
+        viabilityIcon = '❌';
+    }
+
+    if (arbitrageInfo.profitPercentage > 2) {
+        className += ' high-opportunity';
+    } else if (arbitrageInfo.profitPercentage > 0.5) {
+        className += ' opportunity';
+    }
+
+    return `<td class="${className}">
+        <div>${profitPercentage}% ${viabilityIcon}</div>
+        <small>${arbitrageInfo.buyExchange} → ${arbitrageInfo.sellExchange}</small>
+        ${commonChainsHtml}
+    </td>`;
+}
+
+
 // 创建价格单元格HTML，添加高亮（保留原函数用于兼容）
 function createPriceCell(price, maxPrice, minPrice) {
     if (price === null || !isFinite(price)) {
@@ -627,7 +685,6 @@ function showNewListingNotification(listings) {
     });
 }
 
-
 // 更新套利面板
 function updateArbitragePanel() {
     const container = document.getElementById('arbitrage-opportunities');
@@ -689,15 +746,32 @@ function updateAnnouncementsPanel() {
     container.innerHTML = html;
 }
 
+// Fetches chain data from mock data synchronously.
+function fetchChainDataSync(coin) {
+    if (chainDataCache[coin]) {
+        return chainDataCache[coin];
+    }
+    const exchangeData = {};
+    for (const exchange in exchangeConfigs) {
+        exchangeData[exchange] = getMockChainData(coin, exchange);
+    }
+    chainDataCache[coin] = exchangeData;
+    return exchangeData;
+}
+
 // 更新充提信息面板
 async function updateDepositWithdrawPanel() {
     const container = document.getElementById('deposit-withdraw-info');
-    const selectedCoin = cryptoData.length > 0 ? cryptoData[0].symbol : 'BTC'; // 默认或选择的币种
+    const selectedCoin = cryptoData.length > 0 ? cryptoData[0].symbol : 'BTC';
 
-    // 显示加载状态
     container.innerHTML = '<p>正在加载充提信息...</p>';
 
-    const info = await fetchChainData(selectedCoin);
+    let info;
+    if (USE_REAL_APIS) {
+        info = await fetchChainDataAsync(selectedCoin);
+    } else {
+        info = fetchChainDataSync(selectedCoin);
+    }
 
     if (!info) {
         container.innerHTML = '<p>无法加载充提信息。</p>';
@@ -731,141 +805,6 @@ async function updateDepositWithdrawPanel() {
 
     html += '</div>';
     container.innerHTML = html;
-}
-
-const exchangeConfigs = {
-    'OKX': {
-        api: 'https://www.okx.com/api/v5/asset/currencies',
-        param: 'ccy',
-        parser: 'okx'
-    },
-    'Gate': {
-        api: 'https://api.gateio.ws/api/v4/spot/currencies',
-        parser: 'gate'
-    },
-    'Kucoin': {
-        api: 'https://api.kucoin.com/api/v3/currencies',
-        parser: 'kucoin'
-    },
-    'Bitget': {
-        api: 'https://api.bitget.com/api/v2/spot/public/coins',
-        param: 'coin',
-        parser: 'bitget'
-    },
-    'Binance': { mock: true },
-    'MEXC': { mock: true },
-    'Bybit': { mock: true },
-    'HTX': { mock: true }
-};
-
-async function fetchChainData(coin) {
-    if (chainDataCache[coin]) {
-        return chainDataCache[coin];
-    }
-
-    const exchangeData = {};
-
-    // For local testing, use mock data to avoid CORS issues and improve speed
-    if (!USE_REAL_APIS) {
-        for (const exchange in exchangeConfigs) {
-            exchangeData[exchange] = getMockChainData(coin, exchange);
-        }
-        chainDataCache[coin] = exchangeData;
-        return exchangeData;
-    }
-
-    // Real API fetching logic
-    for (const exchange in exchangeConfigs) {
-        const config = exchangeConfigs[exchange];
-        if (config.api) {
-            try {
-                let url = config.api;
-                if (config.param) {
-                    url += `?${config.param}=${coin.toUpperCase()}`;
-                }
-                const response = await fetch(url);
-                const data = await response.json();
-                exchangeData[exchange] = parseChainData(data, config.parser, coin);
-            } catch (error) {
-                console.error(`Error fetching real data for ${exchange}:`, error);
-                exchangeData[exchange] = { deposit: ['API Error'], withdrawal: ['API Error'] };
-            }
-        } else if (config.mock) {
-            exchangeData[exchange] = getMockChainData(coin, exchange);
-        }
-    }
-
-    chainDataCache[coin] = exchangeData;
-    return exchangeData;
-}
-
-function parseChainData(data, parser, coin) {
-    const chains = { deposit: [], withdrawal: [] };
-    const coinLower = coin.toLowerCase();
-
-    try {
-        if (parser === 'okx' && data.data) {
-            const currencyInfo = data.data.find(c => c.ccy.toLowerCase() === coinLower);
-            if (currencyInfo) {
-                if (currencyInfo.canDep) chains.deposit.push(currencyInfo.chain);
-                if (currencyInfo.canWd) chains.withdrawal.push(currencyInfo.chain);
-            }
-        } else if (parser === 'gate' && Array.isArray(data)) {
-            const currencyInfo = data.find(c => c.currency.toLowerCase() === coinLower);
-            if (currencyInfo && currencyInfo.chains) {
-                currencyInfo.chains.forEach(chain => {
-                    if (!chain.deposit_disabled) chains.deposit.push(chain.chain);
-                    if (!chain.withdraw_disabled) chains.withdrawal.push(chain.chain);
-                });
-            }
-        } else if (parser === 'kucoin' && data.data) {
-            const currencyInfo = data.data.find(c => c.currency.toLowerCase() === coinLower);
-            if (currencyInfo && currencyInfo.chains) {
-                currencyInfo.chains.forEach(chain => {
-                    if (chain.isDepositEnabled) chains.deposit.push(chain.chainName);
-                    if (chain.isWithdrawEnabled) chains.withdrawal.push(chain.chainName);
-                });
-            }
-        } else if (parser === 'bitget' && data.data) {
-            const currencyInfo = data.data.find(c => c.coin.toLowerCase() === coinLower);
-            if (currencyInfo && currencyInfo.chains) {
-                currencyInfo.chains.forEach(chain => {
-                    if (chain.rechargeable) chains.deposit.push(chain.chain);
-                    if (chain.withdrawable) chains.withdrawal.push(chain.chain);
-                });
-            }
-        }
-    } catch (e) {
-        console.error(`Error parsing data for ${parser} and coin ${coin}:`, e);
-        return { deposit: ['Parse Error'], withdrawal: ['Parse Error'] };
-    }
-
-    return chains;
-}
-
-function getMockChainData(coin, exchange) {
-    // Base mock data
-    const mockChains = {
-        'BTC': { deposit: ['Bitcoin', 'Lightning'], withdrawal: ['Bitcoin', 'Segwit'] },
-        'ETH': { deposit: ['Ethereum', 'Arbitrum'], withdrawal: ['Ethereum', 'Arbitrum', 'zkSync'] },
-        'USDT': { deposit: ['Ethereum (ERC20)', 'Tron (TRC20)', 'Solana'], withdrawal: ['Ethereum (ERC20)', 'Tron (TRC20)', 'Solana', 'Arbitrum'] }
-    };
-
-    const baseData = mockChains[coin] || { deposit: ['N/A'], withdrawal: ['N/A'] };
-
-    // Simulate slight variations for different exchanges to make it more realistic
-    if (exchange === 'binance') {
-        if (coin === 'ETH') return { deposit: ['Ethereum', 'Arbitrum', 'BSC'], withdrawal: ['Ethereum', 'Arbitrum', 'BSC'] };
-        if (coin === 'BTC') return { deposit: ['Bitcoin', 'Segwit', 'BSC'], withdrawal: ['Bitcoin', 'Segwit'] };
-    }
-    if (exchange === 'okx') {
-        if (coin === 'USDT') return { deposit: ['Ethereum (ERC20)', 'Tron (TRC20)', 'Solana', 'OKTC'], withdrawal: ['Ethereum (ERC20)', 'Tron (TRC20)', 'Solana', 'OKTC'] };
-    }
-    if (exchange === 'gate') {
-        if (coin === 'ETH') return { deposit: ['Ethereum', 'Arbitrum', 'GateChain'], withdrawal: ['Ethereum', 'Arbitrum'] };
-    }
-
-    return JSON.parse(JSON.stringify(baseData)); // Return a copy to prevent mutation
 }
 
 // 生成模拟数据
