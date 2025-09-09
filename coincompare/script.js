@@ -215,74 +215,184 @@ function setAutoRefresh(seconds) {
 // 使用模拟数据
 async function fetchData() {
     if (isLoading) return;
-
     isLoading = true;
     showLoading(true);
     hideError();
 
     try {
-        chainDataCache = {}; // Clear cache on each refresh
-        // 使用 getMockData() 生成的数据
+        // Common setup: Get price data and map it
         const mockData = getMockData();
-
         cryptoData = mockData.map(mockCrypto => {
             const symbolParts = mockCrypto.symbol.split('/');
             const symbol = symbolParts[0];
-
             const cryptoItem = {
                 name: mockCrypto.name,
                 symbol: symbol.toUpperCase(),
-                market_cap: null, // 模拟数据中无此项
-                volume_24h: null,  // 模拟数据中无此项
-                price: mockCrypto.price // 保存基础价格
+                market_cap: null,
+                volume_24h: null,
+                price: mockCrypto.price,
+                arbitrageInfo: null // Initialize arbitrage info
             };
-
-            // 使用一个基础价格来计算价差，这里用binance的价格
             const basePriceForSpread = mockCrypto.binance || 1;
-            const spreadVariation = () => basePriceForSpread * 0.001 * (Math.random() + 0.5); // 买卖价差
-
+            const spreadVariation = () => basePriceForSpread * 0.001 * (Math.random() + 0.5);
             exchanges.forEach(exchange => {
                 const midPrice = mockCrypto[exchange];
                 if (midPrice !== null && isFinite(midPrice)) {
                     const spread = spreadVariation();
                     cryptoItem[exchange] = {
-                        bid: midPrice - spread / 2, // 买入价
-                        ask: midPrice + spread / 2, // 卖出价
-                        mid: midPrice               // 中间价
+                        bid: midPrice - spread / 2,
+                        ask: midPrice + spread / 2,
+                        mid: midPrice
                     };
                 } else {
-                    // 如果交易所没有价格数据，则设为null
                     cryptoItem[exchange] = { bid: null, ask: null, mid: null };
                 }
             });
-
             return cryptoItem;
         });
 
-        // 计算套利机会
-        await calculateArbitrageOpportunities();
+        // Decide which path to take for arbitrage calculation
+        if (USE_REAL_APIS) {
+            await processArbitrageAsync(); // Use real APIs (asynchronous)
+        } else {
+            processArbitrageSync(); // Use mock data (synchronous and robust for local)
+        }
 
-        // 更新表格
-        await updateTable();
-
-        // 更新最后更新时间
+        updateTable(); // Update table with pre-calculated data
         updateLastUpdateTime();
+
     } catch (error) {
-        console.error('获取模拟数据失败:', error);
-        showError('获取模拟数据失败，请检查 getMockData 函数');
+        console.error('Error during data fetching and processing:', error);
+        showError('数据处理时发生错误，请检查控制台日志');
     } finally {
         isLoading = false;
         showLoading(false);
     }
 }
 
-// 更新表格数据
-async function updateTable() {
+// Processes arbitrage opportunities using mock data synchronously.
+function processArbitrageSync() {
+    chainDataCache = {}; // Clear chain data cache
+    cryptoData.forEach(crypto => {
+        crypto.arbitrageInfo = calculateCryptoArbitrageSync(crypto);
+    });
+    // Update the global list for the side panel
+    arbitrageOpportunities = cryptoData
+        .map(c => c.arbitrageInfo ? { ...c.arbitrageInfo, symbol: c.symbol, name: c.name } : null)
+        .filter(info => info && info.profitPercentage > 0.1)
+        .sort((a, b) => b.profitPercentage - a.profitPercentage);
+}
+
+// Processes arbitrage opportunities using real APIs asynchronously.
+async function processArbitrageAsync() {
+    chainDataCache = {}; // Clear chain data cache
+    const promises = cryptoData.map(crypto => calculateCryptoArbitrageAsync(crypto));
+    const results = await Promise.all(promises);
+
+    for (let i = 0; i < cryptoData.length; i++) {
+        cryptoData[i].arbitrageInfo = results[i];
+    }
+    // Update the global list for the side panel
+    arbitrageOpportunities = cryptoData
+        .map(c => c.arbitrageInfo ? { ...c.arbitrageInfo, symbol: c.symbol, name: c.name } : null)
+        .filter(info => info && info.profitPercentage > 0.1)
+        .sort((a, b) => b.profitPercentage - a.profitPercentage);
+}
+
+
+// Synchronously calculates arbitrage for a single coin using mock data.
+function calculateCryptoArbitrageSync(crypto) {
+    let bestBuyExchange = null, bestSellExchange = null, maxProfit = 0;
+
+    for (const buyExchange of exchanges) {
+        for (const sellExchange of exchanges) {
+            if (buyExchange !== sellExchange) {
+                const buyPrice = crypto[buyExchange].ask;
+                const sellPrice = crypto[sellExchange].bid;
+                if(buyPrice && sellPrice){
+                    const profit = sellPrice - buyPrice;
+                    if (profit > maxProfit) {
+                        maxProfit = profit;
+                        bestBuyExchange = buyExchange;
+                        bestSellExchange = sellExchange;
+                    }
+                }
+            }
+        }
+    }
+
+    if (maxProfit > 0 && bestBuyExchange && bestSellExchange) {
+        const buyPrice = crypto[bestBuyExchange].ask;
+        const profitPercentage = (maxProfit / buyPrice) * 100;
+        const chainData = fetchChainDataSync(crypto.symbol); // Sync fetch
+        const buyChains = chainData[bestBuyExchange]?.withdrawal || [];
+        const sellChains = chainData[bestSellExchange]?.deposit || [];
+        const commonChains = buyChains.filter(c => sellChains.includes(c));
+
+        return {
+            profit: maxProfit,
+            profitPercentage: profitPercentage,
+            buyExchange: exchangeNames[bestBuyExchange],
+            sellExchange: exchangeNames[bestSellExchange],
+            buyPrice: buyPrice,
+            sellPrice: crypto[bestSellExchange].bid,
+            isViable: commonChains.length > 0,
+            commonChains: commonChains
+        };
+    }
+    return null;
+}
+
+
+// Asynchronously calculates arbitrage for a single coin using real APIs.
+async function calculateCryptoArbitrageAsync(crypto) {
+    let bestBuyExchange = null, bestSellExchange = null, maxProfit = 0;
+
+    for (const buyExchange of exchanges) {
+        for (const sellExchange of exchanges) {
+            if (buyExchange !== sellExchange) {
+                const buyPrice = crypto[buyExchange].ask;
+                const sellPrice = crypto[sellExchange].bid;
+                if(buyPrice && sellPrice){
+                    const profit = sellPrice - buyPrice;
+                    if (profit > maxProfit) {
+                        maxProfit = profit;
+                        bestBuyExchange = buyExchange;
+                        bestSellExchange = sellExchange;
+                    }
+                }
+            }
+        }
+    }
+
+    if (maxProfit > 0 && bestBuyExchange && bestSellExchange) {
+        const buyPrice = crypto[bestBuyExchange].ask;
+        const profitPercentage = (maxProfit / buyPrice) * 100;
+        const chainData = await fetchChainDataAsync(crypto.symbol); // Async fetch
+        const buyChains = chainData[bestBuyExchange]?.withdrawal || [];
+        const sellChains = chainData[bestSellExchange]?.deposit || [];
+        const commonChains = buyChains.filter(c => sellChains.includes(c));
+
+        return {
+            profit: maxProfit,
+            profitPercentage: profitPercentage,
+            buyExchange: exchangeNames[bestBuyExchange],
+            sellExchange: exchangeNames[bestSellExchange],
+            buyPrice: buyPrice,
+            sellPrice: crypto[bestSellExchange].bid,
+            isViable: commonChains.length > 0,
+            commonChains: commonChains
+        };
+    }
+    return null;
+}
+
+// This function is now synchronous and only renders the table.
+function updateTable() {
     const tableBody = document.getElementById('price-data');
     const searchInput = document.getElementById('search-input');
     const searchTerm = searchInput.value.trim().toLowerCase();
     
-    // 过滤数据
     let filteredData = cryptoData;
     if (searchTerm) {
         filteredData = cryptoData.filter(crypto => 
@@ -291,183 +401,38 @@ async function updateTable() {
         );
     }
     
-    // 排序数据
-    filteredData = sortDataByConfig(filteredData);
-    
-    // 清空表格
+    const sortedData = sortDataByConfig(filteredData);
     tableBody.innerHTML = '';
     
-    // 如果没有数据
-    if (filteredData.length === 0) {
+    if (sortedData.length === 0) {
         const row = document.createElement('tr');
-        row.innerHTML = `<td colspan="10" style="text-align: center;">没有找到匹配的数据</td>`;
+        row.innerHTML = `<td colspan="11" style="text-align: center;">没有找到匹配的数据</td>`;
         tableBody.appendChild(row);
         return;
     }
     
-    // 填充表格
-    for (const crypto of filteredData) {
+    sortedData.forEach(crypto => {
         const row = document.createElement('tr');
-        
-        // 计算最高和最低价格（使用中间价）
-        const prices = exchanges.map(exchange => crypto[exchange].mid).filter(price => price !== null && isFinite(price));
-        
+        const prices = exchanges.map(ex => crypto[ex].mid).filter(p => p !== null && isFinite(p));
         const maxPrice = prices.length > 0 ? Math.max(...prices) : 0;
         const minPrice = prices.length > 0 ? Math.min(...prices) : 0;
         const spread = maxPrice - minPrice;
         const spreadPercentage = (minPrice > 0) ? ((spread / minPrice) * 100).toFixed(2) : "0.00";
         
-        // 计算套利机会
-        const arbitrageInfo = await calculateCryptoArbitrage(crypto);
+        // Arbitrage info is now pre-calculated
+        const arbitrageInfo = crypto.arbitrageInfo;
         
-        // 创建单元格并添加高亮
         row.innerHTML = `
             <td>
                 <div style="font-weight: bold;">${crypto.name}</div>
                 <div style="color: #7f8c8d; font-size: 0.8rem;">${crypto.symbol}</div>
             </td>
-            ${createBidAskCell(crypto.binance, maxPrice, minPrice)}
-            ${createBidAskCell(crypto.okx, maxPrice, minPrice)}
-            ${createBidAskCell(crypto.mexc, maxPrice, minPrice)}
-            ${createBidAskCell(crypto.gate, maxPrice, minPrice)}
-            ${createBidAskCell(crypto.kucoin, maxPrice, minPrice)}
-            ${createBidAskCell(crypto.bitget, maxPrice, minPrice)}
-            ${createBidAskCell(crypto.bybit, maxPrice, minPrice)}
-            ${createBidAskCell(crypto.htx, maxPrice, minPrice)}
+            ${exchanges.map(ex => createBidAskCell(crypto[ex], maxPrice, minPrice)).join('')}
             <td class="price-spread">${spread > 0 ? spread.toFixed(6) : '0.00'} (${spreadPercentage}%)</td>
             ${createArbitrageCell(arbitrageInfo)}
         `;
-        
         tableBody.appendChild(row);
-    }
-}
-
-// 创建买卖价格单元格HTML
-function createBidAskCell(priceData, maxPrice, minPrice) {
-    if (!priceData || !priceData.bid || !priceData.ask) {
-        return '<td>-</td>';
-    }
-    
-    let className = '';
-    const midPrice = priceData.mid;
-    
-    if (midPrice === maxPrice) {
-        className = 'price-highest';
-    } else if (midPrice === minPrice) {
-        className = 'price-lowest';
-    }
-    
-    return `<td class="${className}">
-        <div class="bid-ask-prices">
-            <div class="bid-price">买: ${priceData.bid.toFixed(6)}</div>
-            <div class="ask-price">卖: ${priceData.ask.toFixed(6)}</div>
-        </div>
-    </td>`;
-}
-
-// 创建套利机会单元格
-function createArbitrageCell(arbitrageInfo) {
-    if (!arbitrageInfo || arbitrageInfo.profit <= 0) {
-        return '<td class="arbitrage-cell">-</td>';
-    }
-    
-    const profitPercentage = arbitrageInfo.profitPercentage.toFixed(2);
-    let className = 'arbitrage-cell';
-    let viabilityIcon = '';
-    let commonChainsHtml = '';
-
-    if (arbitrageInfo.isViable) {
-        className += ' viable';
-        viabilityIcon = '✅';
-        commonChainsHtml = `<div class="common-chains" title="可用的充提网络">🔗 ${arbitrageInfo.commonChains.join(', ')}</div>`;
-    } else {
-        className += ' not-viable';
-        viabilityIcon = '❌';
-    }
-    
-    if (arbitrageInfo.profitPercentage > 2) {
-        className += ' high-opportunity';
-    } else if (arbitrageInfo.profitPercentage > 0.5) {
-        className += ' opportunity';
-    }
-    
-    return `<td class="${className}">
-        <div>${profitPercentage}% ${viabilityIcon}</div>
-        <small>${arbitrageInfo.buyExchange} → ${arbitrageInfo.sellExchange}</small>
-        ${commonChainsHtml}
-    </td>`;
-}
-
-// 计算单个货币的套利机会
-async function calculateCryptoArbitrage(crypto) {
-    let bestBuy = null;
-    let bestSell = null;
-    let maxProfit = 0;
-    let chainData = null;
-
-    // 找到最低买入价和最高卖出价
-    for (const buyExchange of exchanges) {
-        for (const sellExchange of exchanges) {
-            if (buyExchange !== sellExchange) {
-                const buyPrice = crypto[buyExchange].ask; // 在买入交易所的卖出价
-                const sellPrice = crypto[sellExchange].bid; // 在卖出交易所的买入价
-                const profit = sellPrice - buyPrice;
-
-                if (profit > maxProfit) {
-                    maxProfit = profit;
-                    bestBuy = buyExchange;
-                    bestSell = sellExchange;
-                }
-            }
-        }
-    }
-
-    if (maxProfit > 0 && bestBuy && bestSell) {
-        const buyPrice = crypto[bestBuy].ask;
-        const profitPercentage = (maxProfit / buyPrice) * 100;
-
-        // 获取链信息
-        if (!chainData) {
-            chainData = await fetchChainData(crypto.symbol);
-        }
-
-        const buyChains = chainData[bestBuy] ? chainData[bestBuy].withdrawal : [];
-        const sellChains = chainData[bestSell] ? chainData[bestSell].deposit : [];
-        const commonChains = buyChains.filter(c => sellChains.includes(c));
-        const isViable = commonChains.length > 0;
-
-        return {
-            profit: maxProfit,
-            profitPercentage: profitPercentage,
-            buyExchange: exchangeNames[bestBuy],
-            sellExchange: exchangeNames[bestSell],
-            buyPrice: buyPrice,
-            sellPrice: crypto[bestSell].bid,
-            isViable: isViable,
-            commonChains: commonChains
-        };
-    }
-
-    return null;
-}
-
-// 计算所有套利机会
-async function calculateArbitrageOpportunities() {
-    arbitrageOpportunities = [];
-    
-    for (const crypto of cryptoData) {
-        const arbitrageInfo = await calculateCryptoArbitrage(crypto);
-        if (arbitrageInfo && arbitrageInfo.profitPercentage > 0.1) { // 只显示利润超过0.1%的机会
-            arbitrageOpportunities.push({
-                symbol: crypto.symbol,
-                name: crypto.name,
-                ...arbitrageInfo
-            });
-        }
-    }
-    
-    // 按利润率排序
-    arbitrageOpportunities.sort((a, b) => b.profitPercentage - a.profitPercentage);
+    });
 }
 
 // 创建价格单元格HTML，添加高亮（保留原函数用于兼容）
