@@ -7,7 +7,6 @@ let sortConfig = {
 let refreshInterval = null;
 let isLoading = false;
 let announcements = [];
-let depositWithdrawInfo = {};
 let arbitrageOpportunities = [];
 
 // 交易所配置
@@ -92,9 +91,6 @@ document.addEventListener('DOMContentLoaded', () => {
     
     // 获取公告信息
     fetchAnnouncements();
-    
-    // 获取充提信息
-    fetchDepositWithdrawInfo();
     
     // 默认设置30秒自动刷新
     setAutoRefresh(30);
@@ -214,64 +210,63 @@ function setAutoRefresh(seconds) {
     }
 }
 
-// 从CoinGecko API获取数据并结合中文名称
+// 使用模拟数据
 async function fetchData() {
     if (isLoading) return;
-    
+
     isLoading = true;
     showLoading(true);
     hideError();
-    
+
     try {
-        const response = await fetch('https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&order=market_cap_desc&per_page=150&page=1&sparkline=false');
-        if (!response.ok) {
-            throw new Error(`HTTP error! status: ${response.status}`);
-        }
-        const apiData = await response.json();
-        
-        // 使用API返回的数据作为基础，保证所有显示的货币都有价格
-        cryptoData = apiData.map(crypto => {
-            const symbolLower = crypto.symbol.toLowerCase();
-            const basePrice = crypto.current_price;
+        // 使用 getMockData() 生成的数据
+        const mockData = getMockData();
 
-            // 检查是否有中文名称，否则使用API提供的英文名称
-            const name = chineseNameMap[symbolLower] || crypto.name;
-
-            const variation = () => (Math.random() - 0.5) * basePrice * 0.02; // 最大±1%的差异
-            const spreadVariation = () => basePrice * 0.001 * (Math.random() + 0.5); // 买卖价差
+        cryptoData = mockData.map(mockCrypto => {
+            const symbolParts = mockCrypto.symbol.split('/');
+            const symbol = symbolParts[0];
 
             const cryptoItem = {
-                name: name,
-                symbol: crypto.symbol.toUpperCase(),
-                market_cap: crypto.market_cap,
-                volume_24h: crypto.total_volume
+                name: mockCrypto.name,
+                symbol: symbol.toUpperCase(),
+                market_cap: null, // 模拟数据中无此项
+                volume_24h: null,  // 模拟数据中无此项
+                price: mockCrypto.price // 保存基础价格
             };
 
-            // 为每个交易所生成买入价和卖出价
+            // 使用一个基础价格来计算价差，这里用binance的价格
+            const basePriceForSpread = mockCrypto.binance || 1;
+            const spreadVariation = () => basePriceForSpread * 0.001 * (Math.random() + 0.5); // 买卖价差
+
             exchanges.forEach(exchange => {
-                const midPrice = basePrice + variation();
-                const spread = spreadVariation();
-                cryptoItem[exchange] = {
-                    bid: midPrice - spread/2,  // 买入价
-                    ask: midPrice + spread/2,  // 卖出价
-                    mid: midPrice              // 中间价
-                };
+                const midPrice = mockCrypto[exchange];
+                if (midPrice !== null && isFinite(midPrice)) {
+                    const spread = spreadVariation();
+                    cryptoItem[exchange] = {
+                        bid: midPrice - spread / 2, // 买入价
+                        ask: midPrice + spread / 2, // 卖出价
+                        mid: midPrice               // 中间价
+                    };
+                } else {
+                    // 如果交易所没有价格数据，则设为null
+                    cryptoItem[exchange] = { bid: null, ask: null, mid: null };
+                }
             });
 
             return cryptoItem;
         });
-        
+
         // 计算套利机会
-        calculateArbitrageOpportunities();
-        
+        await calculateArbitrageOpportunities();
+
         // 更新表格
-        updateTable();
-        
+        await updateTable();
+
         // 更新最后更新时间
         updateLastUpdateTime();
     } catch (error) {
-        console.error('获取数据失败:', error);
-        showError('获取价格数据失败，请稍后再试');
+        console.error('获取模拟数据失败:', error);
+        showError('获取模拟数据失败，请检查 getMockData 函数');
     } finally {
         isLoading = false;
         showLoading(false);
@@ -279,7 +274,7 @@ async function fetchData() {
 }
 
 // 更新表格数据
-function updateTable() {
+async function updateTable() {
     const tableBody = document.getElementById('price-data');
     const searchInput = document.getElementById('search-input');
     const searchTerm = searchInput.value.trim().toLowerCase();
@@ -308,7 +303,7 @@ function updateTable() {
     }
     
     // 填充表格
-    filteredData.forEach(crypto => {
+    for (const crypto of filteredData) {
         const row = document.createElement('tr');
         
         // 计算最高和最低价格（使用中间价）
@@ -320,7 +315,7 @@ function updateTable() {
         const spreadPercentage = (minPrice > 0) ? ((spread / minPrice) * 100).toFixed(2) : "0.00";
         
         // 计算套利机会
-        const arbitrageInfo = calculateCryptoArbitrage(crypto);
+        const arbitrageInfo = await calculateCryptoArbitrage(crypto);
         
         // 创建单元格并添加高亮
         row.innerHTML = `
@@ -341,7 +336,7 @@ function updateTable() {
         `;
         
         tableBody.appendChild(row);
-    });
+    }
 }
 
 // 创建买卖价格单元格HTML
@@ -375,6 +370,15 @@ function createArbitrageCell(arbitrageInfo) {
     
     const profitPercentage = arbitrageInfo.profitPercentage.toFixed(2);
     let className = 'arbitrage-cell';
+    let viabilityIcon = '';
+
+    if (arbitrageInfo.isViable) {
+        className += ' viable';
+        viabilityIcon = `<span class="viability-icon" title="搬砖路径通畅: ${arbitrageInfo.commonChains.join(', ')}">✅</span>`;
+    } else {
+        className += ' not-viable';
+        viabilityIcon = `<span class="viability-icon" title="搬砖路径不通">❌</span>`;
+    }
     
     if (arbitrageInfo.profitPercentage > 2) {
         className += ' high-opportunity';
@@ -383,57 +387,70 @@ function createArbitrageCell(arbitrageInfo) {
     }
     
     return `<td class="${className}">
-        <div>${profitPercentage}%</div>
+        <div>${profitPercentage}% ${viabilityIcon}</div>
         <small>${arbitrageInfo.buyExchange} → ${arbitrageInfo.sellExchange}</small>
     </td>`;
 }
 
 // 计算单个货币的套利机会
-function calculateCryptoArbitrage(crypto) {
+async function calculateCryptoArbitrage(crypto) {
     let bestBuy = null;
     let bestSell = null;
     let maxProfit = 0;
-    
+    let chainData = null;
+
     // 找到最低买入价和最高卖出价
-    exchanges.forEach(buyExchange => {
-        exchanges.forEach(sellExchange => {
+    for (const buyExchange of exchanges) {
+        for (const sellExchange of exchanges) {
             if (buyExchange !== sellExchange) {
                 const buyPrice = crypto[buyExchange].ask; // 在买入交易所的卖出价
                 const sellPrice = crypto[sellExchange].bid; // 在卖出交易所的买入价
                 const profit = sellPrice - buyPrice;
-                
+
                 if (profit > maxProfit) {
                     maxProfit = profit;
                     bestBuy = buyExchange;
                     bestSell = sellExchange;
                 }
             }
-        });
-    });
-    
+        }
+    }
+
     if (maxProfit > 0 && bestBuy && bestSell) {
         const buyPrice = crypto[bestBuy].ask;
         const profitPercentage = (maxProfit / buyPrice) * 100;
-        
+
+        // 获取链信息
+        if (!chainData) {
+            chainData = await fetchChainData(crypto.symbol);
+        }
+
+        const buyChains = chainData[bestBuy] ? chainData[bestBuy].withdrawal : [];
+        const sellChains = chainData[bestSell] ? chainData[bestSell].deposit : [];
+        const commonChains = buyChains.filter(c => sellChains.includes(c));
+        const isViable = commonChains.length > 0;
+
         return {
             profit: maxProfit,
             profitPercentage: profitPercentage,
             buyExchange: exchangeNames[bestBuy],
             sellExchange: exchangeNames[bestSell],
             buyPrice: buyPrice,
-            sellPrice: crypto[bestSell].bid
+            sellPrice: crypto[bestSell].bid,
+            isViable: isViable,
+            commonChains: commonChains
         };
     }
-    
+
     return null;
 }
 
 // 计算所有套利机会
-function calculateArbitrageOpportunities() {
+async function calculateArbitrageOpportunities() {
     arbitrageOpportunities = [];
     
-    cryptoData.forEach(crypto => {
-        const arbitrageInfo = calculateCryptoArbitrage(crypto);
+    for (const crypto of cryptoData) {
+        const arbitrageInfo = await calculateCryptoArbitrage(crypto);
         if (arbitrageInfo && arbitrageInfo.profitPercentage > 0.1) { // 只显示利润超过0.1%的机会
             arbitrageOpportunities.push({
                 symbol: crypto.symbol,
@@ -441,7 +458,7 @@ function calculateArbitrageOpportunities() {
                 ...arbitrageInfo
             });
         }
-    });
+    }
     
     // 按利润率排序
     arbitrageOpportunities.sort((a, b) => b.profitPercentage - a.profitPercentage);
@@ -639,35 +656,6 @@ function showNewListingNotification(listings) {
     });
 }
 
-// 获取充值提现信息
-async function fetchDepositWithdrawInfo() {
-    try {
-        // 模拟充提信息数据
-        depositWithdrawInfo = {
-            'BTC': {
-                networks: [
-                    { name: 'Bitcoin', symbol: 'BTC', depositFee: 0, withdrawFee: 0.0005, minWithdraw: 0.001 },
-                    { name: 'Lightning Network', symbol: 'BTC-Lightning', depositFee: 0, withdrawFee: 0.000001, minWithdraw: 0.00001 }
-                ]
-            },
-            'ETH': {
-                networks: [
-                    { name: 'Ethereum', symbol: 'ETH', depositFee: 0, withdrawFee: 0.005, minWithdraw: 0.01 },
-                    { name: 'Arbitrum', symbol: 'ETH-ARBITRUM', depositFee: 0, withdrawFee: 0.0001, minWithdraw: 0.001 }
-                ]
-            },
-            'USDT': {
-                networks: [
-                    { name: 'Ethereum (ERC20)', symbol: 'USDT-ERC20', depositFee: 0, withdrawFee: 15, minWithdraw: 20 },
-                    { name: 'Tron (TRC20)', symbol: 'USDT-TRC20', depositFee: 0, withdrawFee: 1, minWithdraw: 10 },
-                    { name: 'BSC (BEP20)', symbol: 'USDT-BEP20', depositFee: 0, withdrawFee: 0.8, minWithdraw: 10 }
-                ]
-            }
-        };
-    } catch (error) {
-        console.error('获取充提信息失败:', error);
-    }
-}
 
 // 更新套利面板
 function updateArbitragePanel() {
@@ -731,37 +719,168 @@ function updateAnnouncementsPanel() {
 }
 
 // 更新充提信息面板
-function updateDepositWithdrawPanel() {
+async function updateDepositWithdrawPanel() {
     const container = document.getElementById('deposit-withdraw-info');
-    
-    if (Object.keys(depositWithdrawInfo).length === 0) {
-        container.innerHTML = '<p>暂无充提信息</p>';
+    const selectedCoin = cryptoData.length > 0 ? cryptoData[0].symbol : 'BTC'; // 默认或选择的币种
+
+    // 显示加载状态
+    container.innerHTML = '<p>正在加载充提信息...</p>';
+
+    const info = await fetchChainData(selectedCoin);
+
+    if (!info) {
+        container.innerHTML = '<p>无法加载充提信息。</p>';
         return;
     }
-    
-    const html = Object.entries(depositWithdrawInfo).map(([symbol, info]) => {
-        const networksHtml = info.networks.map(network => {
-            return `
-                <div class="network-info">
-                    <span><strong>${network.name}</strong></span>
-                    <span>提现费: ${network.withdrawFee} ${symbol}</span>
-                </div>
-                <div class="fee-info">
-                    充值费: ${network.depositFee} ${symbol} | 
-                    最小提现: ${network.minWithdraw} ${symbol}
+
+    let html = `<h5>${selectedCoin} 充提网络信息</h5>`;
+    html += '<div class="row">';
+
+    for (const exchange of exchanges) {
+        const data = info[exchange];
+        if (data) {
+            const depositChains = data.deposit.join(', ') || 'N/A';
+            const withdrawalChains = data.withdrawal.join(', ') || 'N/A';
+            const commonChains = data.deposit.filter(c => data.withdrawal.includes(c)).join(', ');
+            const unificationClass = commonChains ? 'text-success' : 'text-danger';
+            const unificationText = commonChains ? `是 (${commonChains})` : '否';
+
+            html += `
+                <div class="col-md-6">
+                    <div class="deposit-withdraw-item">
+                        <h6>${exchangeNames[exchange]}</h6>
+                        <p><strong>支持的充值网络:</strong> ${depositChains}</p>
+                        <p><strong>支持的提现网络:</strong> ${withdrawalChains}</p>
+                        <p><strong>充提网络是否统一:</strong> <span class="${unificationClass}">${unificationText}</span></p>
+                    </div>
                 </div>
             `;
-        }).join('');
-        
-        return `
-            <div class="deposit-withdraw-item">
-                <h5>${symbol}</h5>
-                ${networksHtml}
-            </div>
-        `;
-    }).join('');
-    
+        }
+    }
+
+    html += '</div>';
     container.innerHTML = html;
+}
+
+const exchangeConfigs = {
+    'OKX': {
+        api: 'https://www.okx.com/api/v5/asset/currencies',
+        parser: 'okx'
+    },
+    'Gate': {
+        api: 'https://api.gateio.ws/api/v4/spot/currencies',
+        parser: 'gate'
+    },
+    'Kucoin': {
+        api: 'https://api.kucoin.com/api/v3/currencies',
+        parser: 'kucoin'
+    },
+    'Bitget': {
+        api: 'https://api.bitget.com/api/v2/spot/public/coins',
+        parser: 'bitget'
+    },
+    'Binance': {
+        mock: true
+    },
+    'MEXC': {
+        mock: true
+    },
+    'Bybit': {
+        mock: true
+    },
+    'HTX': {
+        mock: true
+    }
+};
+
+async function fetchChainData(coin) {
+    const exchangeData = {};
+
+    for (const exchange in exchangeConfigs) {
+        const config = exchangeConfigs[exchange];
+        if (config.api) {
+            try {
+                const response = await fetch(`${config.api}?coin=${coin.toLowerCase()}`);
+                const data = await response.json();
+                exchangeData[exchange] = parseChainData(data, config.parser, coin);
+            } catch (error) {
+                console.error(`Error fetching data for ${exchange}:`, error);
+                exchangeData[exchange] = {
+                    deposit: ['Error'],
+                    withdrawal: ['Error']
+                };
+            }
+        } else if (config.mock) {
+            exchangeData[exchange] = getMockChainData(coin);
+        }
+    }
+
+    return exchangeData;
+}
+
+function parseChainData(data, parser, coin) {
+    const chains = {
+        deposit: [],
+        withdrawal: []
+    };
+
+    if (parser === 'okx' && data.data) {
+        data.data.forEach(currency => {
+            if(currency.ccy.toLowerCase() === coin.toLowerCase()){
+                if (currency.canDep) chains.deposit.push(currency.chain);
+                if (currency.canWd) chains.withdrawal.push(currency.chain);
+            }
+        });
+    } else if (parser === 'gate' && data) {
+        data.forEach(currency => {
+            if (currency.currency.toLowerCase() === coin.toLowerCase() && currency.chains) {
+                currency.chains.forEach(chain => {
+                    if (chain.deposit_disabled === 0) chains.deposit.push(chain.chain);
+                    if (chain.withdraw_disabled === 0) chains.withdrawal.push(chain.chain);
+                });
+            }
+        });
+    } else if (parser === 'kucoin' && data.data) {
+        if (data.data.chains) {
+            data.data.chains.forEach(chain => {
+                if (chain.isDepositEnabled) chains.deposit.push(chain.chainName);
+                if (chain.isWithdrawEnabled) chains.withdrawal.push(chain.chainName);
+            });
+        }
+    } else if (parser === 'bitget' && data.data) {
+        data.data.forEach(currency => {
+            if(currency.coin.toLowerCase() === coin.toLowerCase() && currency.chains){
+                currency.chains.forEach(chain => {
+                    if (chain.rechargeable) chains.deposit.push(chain.chain);
+                    if (chain.withdrawable) chains.withdrawal.push(chain.chain);
+                });
+            }
+        });
+    }
+
+    return chains;
+}
+
+function getMockChainData(coin) {
+    // In a real application, this would be a more sophisticated mock
+    const mockChains = {
+        'BTC': {
+            deposit: ['Bitcoin', 'Lightning'],
+            withdrawal: ['Bitcoin']
+        },
+        'ETH': {
+            deposit: ['Ethereum', 'Arbitrum'],
+            withdrawal: ['Ethereum', 'Arbitrum', 'zkSync']
+        },
+        'USDT': {
+            deposit: ['Ethereum', 'Tron', 'Solana'],
+            withdrawal: ['Ethereum', 'Tron', 'Solana', 'Arbitrum']
+        }
+    };
+    return mockChains[coin] || {
+        deposit: ['N/A'],
+        withdrawal: ['N/A']
+    };
 }
 
 // 生成模拟数据
